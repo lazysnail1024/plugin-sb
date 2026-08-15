@@ -99,7 +99,7 @@ Panel {
       Item {
         SingBoxIcon {
           anchors.centerIn: parent
-          iconSize: Style.space(12)
+          iconSize: Style.space(14)
           color: root.barIconColor
         }
       }
