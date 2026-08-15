@@ -22,6 +22,7 @@ Panel {
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property color hoverFill: bar ? Style.hoverFillFor(bar.foreground, Color.accent) : "transparent"
   readonly property color selectedFill: bar ? Style.selectedFillFor(bar.foreground, Color.accent) : "transparent"
+  readonly property color barIconColor: singbox.active ? barForeground : Qt.darker(barForeground, 1.55)
   readonly property string profileName: singbox.selectedProfileName()
   readonly property string heroMeta: {
     if (!singbox.installed) return "CLIENT NOT INSTALLED"
@@ -94,7 +95,15 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: "󰖂"
+    iconComponent: Component {
+      Item {
+        SingBoxIcon {
+          anchors.centerIn: parent
+          iconSize: Style.space(12)
+          color: root.barIconColor
+        }
+      }
+    }
     active: singbox.active
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.RightButton) singbox.toggleService()
@@ -163,11 +172,9 @@ Panel {
               fontFamily: root.fontFamily
               iconOpacity: singbox.active ? 1.0 : 0.5
               iconComponent: Component {
-                Text {
-                  text: "󰖂"
+                SingBoxIcon {
+                  iconSize: Style.font.display
                   color: root.iconColor
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.display
                 }
               }
               trailingControl: Component {
