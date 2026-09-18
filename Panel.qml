@@ -112,7 +112,7 @@ Panel {
     }
 
     PanelToolTip {
-      visible: button.containsMouse
+      visible: button.tooltipHovered
       text: "sing-box · " + (singbox.statusText || "Unknown")
       fontFamily: root.fontFamily
     }
