@@ -178,18 +178,44 @@ Panel {
                 }
               }
               trailingControl: Component {
-                ToggleSwitch {
-                  id: serviceSwitch
-                  visible: singbox.installed && singbox.profiles.length > 0
-                  checked: singbox.active
-                  busy: singbox.busy
-                  foreground: hero.foreground
-                  onToggled: singbox.toggleService()
+                RowLayout {
+                  spacing: Style.space(6)
 
-                  PanelToolTip {
-                    visible: serviceSwitch.containsMouse
-                    text: root.toggleHint
+                  PanelActionButton {
+                    iconText: "󰏌"
+                    tooltipText: "Open sing-box"
+                    foreground: hero.foreground
                     fontFamily: hero.fontFamily
+                    size: Style.space(28)
+                    bordered: true
+                    enabled: singbox.installed
+                    onClicked: root.openClient()
+                  }
+
+                  PanelActionButton {
+                    iconText: "󰑐"
+                    tooltipText: "Refresh"
+                    foreground: hero.foreground
+                    fontFamily: hero.fontFamily
+                    size: Style.space(28)
+                    bordered: true
+                    enabled: !singbox.busy
+                    onClicked: singbox.refresh()
+                  }
+
+                  ToggleSwitch {
+                    id: serviceSwitch
+                    visible: singbox.installed && singbox.profiles.length > 0
+                    checked: singbox.active
+                    busy: singbox.busy
+                    foreground: hero.foreground
+                    onToggled: singbox.toggleService()
+
+                    PanelToolTip {
+                      visible: serviceSwitch.containsMouse
+                      text: root.toggleHint
+                      fontFamily: hero.fontFamily
+                    }
                   }
                 }
               }
@@ -409,20 +435,6 @@ Panel {
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
               elide: Text.ElideRight
-            }
-            PanelActionButton {
-              iconText: "󰑐"
-              tooltipText: "Refresh"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              onClicked: singbox.refresh()
-            }
-            PanelActionButton {
-              iconText: "󰏌"
-              tooltipText: "Open sing-box"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              onClicked: root.openClient()
             }
           }
         }
