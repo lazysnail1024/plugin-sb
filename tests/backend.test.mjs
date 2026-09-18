@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  Controller,
   GrpcClient,
   GrpcFrameDecoder,
   concatFields,
@@ -20,6 +21,59 @@ import {
   parseFields,
   stringField
 } from "../backend.mjs";
+
+test("available daemon does not request service startup", async () => {
+  const controller = new Controller(() => {}, { startDaemon: async () => assert.fail("unexpected startup") });
+  controller.connect = async () => { controller.client = {}; controller.state.daemonAvailable = true; };
+  await controller.ensureDaemon();
+});
+
+test("startup card connects the background without requiring or starting a profile", async () => {
+  const calls = [];
+  const controller = new Controller(() => {});
+  controller.ensureDaemon = async () => { calls.push("daemon"); };
+  controller.ensureOwned = async () => { calls.push("ownership"); };
+  controller.refreshServiceStatusOnce = async () => { calls.push("status"); };
+  controller.startSelectedProfile = async () => assert.fail("must not start proxy");
+  await controller.perform({ action: "startBackground" });
+  assert.deepEqual(calls, ["daemon", "ownership", "status"]);
+});
+
+test("offline daemon is started once and awaited", async () => {
+  let starts = 0;
+  const controller = new Controller(() => {}, { startDaemon: async () => { starts++; } });
+  controller.connect = async () => {
+    if (starts) { controller.client = {}; controller.state.daemonAvailable = true; }
+  };
+  await controller.ensureDaemon();
+  assert.equal(starts, 1);
+  assert.equal(controller.state.daemonAvailable, true);
+});
+
+test("authorization failure is returned without continuing", async () => {
+  const controller = new Controller(() => {}, { startDaemon: async () => { throw new Error("authorization cancelled"); } });
+  controller.connect = async () => {};
+  await assert.rejects(controller.ensureDaemon(), /authorization cancelled/);
+  assert.equal(controller.client, null);
+});
+
+test("refresh reconnects without starting the daemon", async () => {
+  let attempts = 0;
+  const controller = new Controller(() => {}, { startDaemon: async () => assert.fail("unexpected startup") });
+  controller.connect = async () => { attempts++; };
+  await controller.perform({ action: "refresh" });
+  assert.equal(attempts, 1);
+});
+
+test("explicit turn-on does not stop a service that became active", async () => {
+  const controller = new Controller(() => {});
+  controller.refreshProfiles = () => { controller.state.selectedProfileId = "test"; };
+  controller.ensureDaemon = async () => {};
+  controller.ensureOwned = async () => {};
+  controller.refreshServiceStatusOnce = async () => { controller.state.status = "started"; };
+  controller.client = { unary: async () => assert.fail("unexpected stop") };
+  await controller.perform({ action: "toggle", enabled: true });
+});
 
 test("protobuf reader decodes daemon and service state", () => {
   const daemon = concatFields(stringField(1, "1.14.0-beta.14"), intField(2, 2));

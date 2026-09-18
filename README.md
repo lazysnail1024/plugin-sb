@@ -66,6 +66,24 @@ omarchy plugin remove sing-box
 
 ## Controller ownership
 
+The desktop window does not need to stay open. When turning the service on,
+the plugin reconnects to the daemon and, if unavailable, starts the installed
+`sing-box-daemon.service` using `pkexec /usr/bin/systemctl start`.
+The system may ask for authentication. Authorization is bounded to 60 seconds,
+followed by a 10-second readiness window; failures appear in the panel.
+Refresh and automatic reconnect never request elevation or start the service.
+Install the official client and import a profile first; the plugin does not
+install or enable system services at boot.
+
+The header, app button, refresh button, and switch remain fixed while the
+profile, mode, and group lists scroll below them. App launch errors remain
+visible in the panel.
+
+Panel width follows 30% of the anchor display's available logical width,
+bounded to 340–560 theme-scaled units and fitted to the display. Height is
+capped at 72% of available space. Profiles are collapsed into a single current
+profile row; click to expand and select another configuration.
+
 The sing-box daemon allows one desktop controller at a time. The plugin claims
 the daemon when no controller is present. If the official sing-box app already
 owns it, the panel shows **Controlled by the sing-box app** and offers an

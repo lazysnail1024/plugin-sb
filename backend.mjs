@@ -7,6 +7,8 @@ import { pathToFileURL } from "node:url";
 import http2 from "node:http2";
 import net from "node:net";
 import readline from "node:readline";
+import { execFile, spawn } from "node:child_process";
+import { promisify } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 
 const SOCKET_PATH = process.env.SING_BOX_SOCKET || "/run/sing-box.socket";
@@ -15,6 +17,30 @@ const CONFIG_HOME = process.env.SING_BOX_CONFIG_DIR
 const DATABASE_PATH = join(CONFIG_HOME, "settings.db");
 const PROFILES_PATH = join(CONFIG_HOME, "profiles");
 const CLIENT_BINARY = process.env.SING_BOX_CLIENT_BINARY || "/opt/sing-box/sing-box";
+const runFile = promisify(execFile);
+
+async function startDaemon() {
+  const { stdout } = await runFile("systemctl", ["show", "sing-box-daemon.service", "--property=LoadState", "--value"], { timeout: 5000 });
+  if (stdout.trim() !== "loaded") throw new Error("sing-box background service is not installed. Open the app to complete setup.");
+  try {
+    await runFile("pkexec", ["/usr/bin/systemctl", "start", "sing-box-daemon.service"], { timeout: 60000 });
+  } catch {
+    throw new Error("Could not start sing-box background service. Authorization was cancelled, timed out, or the service failed.");
+  }
+}
+
+function launchClient() {
+  return new Promise((resolveLaunch, rejectLaunch) => {
+    const child = spawn("uwsm-app", ["--", CLIENT_BINARY], { detached: true, stdio: "ignore" });
+    child.once("error", (error) => { clearTimeout(timer); rejectLaunch(error); });
+    child.once("exit", (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolveLaunch();
+      else rejectLaunch(new Error("Could not open sing-box app"));
+    });
+    const timer = setTimeout(() => { child.unref(); resolveLaunch(); }, 1500);
+  });
+}
 
 const OWNERSHIP = ["unspecified", "available", "caller", "other"];
 const SERVICE_STATUS = ["idle", "starting", "started", "stopping", "fatal"];
@@ -452,7 +478,9 @@ function cleanError(error) {
 }
 
 class Controller {
-  constructor(writeLine = (value) => process.stdout.write(`${JSON.stringify(value)}\n`)) {
+  constructor(writeLine = (value) => process.stdout.write(`${JSON.stringify(value)}\n`), dependencies = {}) {
+    this.startDaemon = dependencies.startDaemon || startDaemon;
+    this.launchClient = dependencies.launchClient || launchClient;
     this.writeLine = writeLine;
     this.client = null;
     this.retryTimer = null;
@@ -510,7 +538,14 @@ class Controller {
   }
 
   async connect() {
-    if (this.connecting || this.client) return;
+    if (this.connectionPromise) return this.connectionPromise;
+    this.connectionPromise = this.connectOnce();
+    try { await this.connectionPromise; }
+    finally { this.connectionPromise = null; }
+  }
+
+  async connectOnce() {
+    if (this.client) return;
     this.connecting = true;
     const client = new GrpcClient();
     try {
@@ -556,9 +591,7 @@ class Controller {
       this.state.daemonAvailable = false;
       this.state.ownership = "unavailable";
       this.state.status = "unknown";
-      this.state.statusText = existsSync(SOCKET_PATH)
-        ? "sing-box daemon is not running"
-        : "sing-box daemon is not installed";
+      this.state.statusText = "Background unavailable · turn on to reconnect";
       this.state.lastError = cleanError(error);
       this.emitState();
       this.scheduleRetry();
@@ -687,6 +720,22 @@ class Controller {
     this.startSubscriptions();
   }
 
+  async ensureDaemon() {
+    await this.connect();
+    if (this.client && this.state.daemonAvailable) return;
+    this.state.lastError = "";
+    this.state.statusText = "Starting background service…";
+    this.emitState();
+    await this.startDaemon();
+    const deadline = Date.now() + 10000;
+    do {
+      await this.connect();
+      if (this.client && this.state.daemonAvailable) return;
+      await new Promise((done) => setTimeout(done, 300));
+    } while (Date.now() < deadline);
+    throw new Error("Background service started but did not become ready. Check sing-box-daemon.service.");
+  }
+
   async refreshServiceStatusOnce() {
     if (!this.client) throw new Error("sing-box daemon is unavailable");
     const status = decodeServiceStatus(await this.client.first(
@@ -716,15 +765,46 @@ class Controller {
 
   async perform(command) {
     const action = String(command.action || "");
+    if (action === "startBackground") {
+      await this.ensureDaemon();
+      await this.ensureOwned(true);
+      await this.refreshServiceStatusOnce();
+      this.refreshProfiles();
+      this.state.lastError = "";
+      this.emitState();
+      return;
+    }
+    if (action === "openClient") {
+      if (!existsSync(CLIENT_BINARY)) throw new Error("sing-box app is not installed");
+      await this.launchClient();
+      return;
+    }
     if (action === "refresh") {
       this.refreshProfiles();
+      await this.connect();
+      this.emitState();
+      return;
+    }
+
+    if (action === "toggle") {
+      this.refreshProfiles();
+      if (!this.state.selectedProfileId) throw new Error("Select a profile first. Open sing-box to import one if the list is empty.");
+      await this.ensureDaemon();
+    }
+
+    if (action === "setProfile" && !this.state.daemonAvailable) {
+      const profileId = String(command.profileId || "");
+      if (!listProfiles().profiles.some((profile) => profile.id === profileId)) throw new Error("profile not found");
+      writePreference("selected_profile_id", profileId);
+      this.refreshProfiles();
+      this.state.lastError = "";
       this.emitState();
       return;
     }
 
     await this.ensureOwned(true);
 
-    if (this.state.status === "unknown") {
+    if (this.state.status === "unknown" || action === "toggle") {
       await this.refreshServiceStatusOnce();
     }
 
@@ -733,9 +813,10 @@ class Controller {
       return;
     }
     if (action === "toggle") {
-      if (isRunningStatus(this.state.status)) {
+      const desired = typeof command.enabled === "boolean" ? command.enabled : !isRunningStatus(this.state.status);
+      if (!desired && isRunningStatus(this.state.status)) {
         await this.client.unary("/daemon.ManagedService/StopService", Buffer.alloc(0), 10000);
-      } else {
+      } else if (desired && !isRunningStatus(this.state.status)) {
         await this.startSelectedProfile();
       }
     } else if (action === "setProfile") {
@@ -862,6 +943,7 @@ if (isMain) {
 }
 
 export {
+  Controller,
   GrpcClient,
   GrpcFrameDecoder,
   concatFields,

@@ -13,6 +13,7 @@ Panel {
   manageIpc: false
 
   property string expandedGroupTag: ""
+  property bool profilesExpanded: false
   property string hoverKind: ""
   property string hoverKey: ""
 
@@ -52,8 +53,7 @@ Panel {
   }
 
   function openClient() {
-    root.close()
-    Quickshell.execDetached(["uwsm-app", "--", "/opt/sing-box/sing-box"])
+    singbox.send("openClient")
   }
 
   function scrollBy(delta) {
@@ -68,6 +68,7 @@ Panel {
   onOpenedChanged: if (opened) {
     if (panelFlick) panelFlick.contentY = 0
     expandedGroupTag = ""
+    profilesExpanded = false
     hoverKind = ""
     hoverKey = ""
     singbox.refresh()
@@ -111,11 +112,6 @@ Panel {
       else root.toggle()
     }
 
-    PanelToolTip {
-      visible: button.tooltipHovered
-      text: "sing-box · " + (singbox.statusText || "Unknown")
-      fontFamily: root.fontFamily
-    }
   }
 
   KeyboardPanel {
@@ -125,8 +121,9 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(420))
-    contentHeight: panel.fittedContentHeight(contentColumn.implicitHeight, Style.space(620))
+    // Use the anchor screen's logical available space, including its scale.
+    contentWidth: panel.fittedContentWidth(Math.max(Style.space(340), Math.min(Style.space(560), panel.availableCardWidth * 0.30)))
+    contentHeight: panel.fittedContentHeight(heroHeader.implicitHeight + Style.space(16) + contentColumn.implicitHeight, panel.availableCardHeight * 0.72)
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -141,33 +138,21 @@ Panel {
         else if (text === "c" || text === "C") singbox.closeAllConnections()
       }
 
-      Flickable {
-        id: panelFlick
-        anchors.fill: parent
-        contentWidth: width
-        contentHeight: contentColumn.implicitHeight
-        clip: true
-        boundsBehavior: Flickable.StopAtBounds
-        flickableDirection: Flickable.VerticalFlick
-        interactive: contentHeight > height
-        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-
-        Column {
-          id: contentColumn
-          width: panelFlick.width
-          spacing: Style.space(12)
-
           Item {
             id: heroHeader
+            anchors.top: parent.top
             width: parent.width
+            height: implicitHeight
             implicitHeight: hero.implicitHeight
+            readonly property string switchHint: root.toggleHint
+            function launchApp() { root.openClient() }
 
             PanelHero {
               id: hero
               width: parent.width
               title: "sing-box"
               meta: root.heroMeta
-              detail: root.profileName
+              detail: ""
               foreground: root.foreground
               fontFamily: root.fontFamily
               iconOpacity: singbox.active ? 1.0 : 0.5
@@ -189,7 +174,7 @@ Panel {
                     size: Style.space(28)
                     bordered: true
                     enabled: singbox.installed
-                    onClicked: root.openClient()
+                    onClicked: heroHeader.launchApp()
                   }
 
                   PanelActionButton {
@@ -205,7 +190,7 @@ Panel {
 
                   ToggleSwitch {
                     id: serviceSwitch
-                    visible: singbox.installed && singbox.profiles.length > 0
+                    visible: singbox.installed
                     checked: singbox.active
                     busy: singbox.busy
                     foreground: hero.foreground
@@ -213,13 +198,43 @@ Panel {
 
                     PanelToolTip {
                       visible: serviceSwitch.containsMouse
-                      text: root.toggleHint
+                      text: heroHeader.switchHint
                       fontFamily: hero.fontFamily
                     }
                   }
                 }
               }
             }
+          }
+
+      Flickable {
+        id: panelFlick
+        anchors.top: heroHeader.bottom
+        anchors.topMargin: Style.space(16)
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        contentWidth: width
+        contentHeight: contentColumn.implicitHeight
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        flickableDirection: Flickable.VerticalFlick
+        interactive: contentHeight > height
+        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+        Column {
+          id: contentColumn
+          width: panelFlick.width
+          spacing: Style.space(12)
+
+          Text {
+            visible: singbox.installed && singbox.daemonAvailable && singbox.profiles.length === 0
+            width: parent.width
+            text: "No profiles yet. Open sing-box using the top-right button to import a configuration."
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            wrapMode: Text.WordWrap
           }
 
           Text {
@@ -230,6 +245,68 @@ Panel {
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
             wrapMode: Text.WordWrap
+          }
+
+          CursorSurface {
+            visible: singbox.installed && !singbox.daemonAvailable
+            width: parent.width
+            implicitHeight: startupRow.implicitHeight + Style.space(24)
+            foreground: root.foreground
+            bordered: true
+            hasCursor: startupMouse.containsMouse
+
+            MouseArea {
+              id: startupMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              enabled: !singbox.busy
+              cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+              onClicked: singbox.startBackground()
+            }
+
+            RowLayout {
+              id: startupRow
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              anchors.margins: Style.space(12)
+              spacing: Style.space(10)
+
+              Text {
+                text: "󰐥"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.heading
+              }
+              ColumnLayout {
+                Layout.fillWidth: true
+                spacing: Style.space(3)
+                Text {
+                  Layout.fillWidth: true
+                  text: singbox.busy ? "Starting sing-box…" : "Start sing-box background service"
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  wrapMode: Text.WordWrap
+                }
+                Text {
+                  Layout.fillWidth: true
+                  text: "Click to connect. System authorization may be required."
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+              }
+              PanelActionButton {
+                iconText: "󰏌"
+                tooltipText: "Open sing-box app"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                enabled: !singbox.busy
+                onClicked: root.openClient()
+              }
+            }
           }
 
           CursorSurface {
@@ -318,22 +395,59 @@ Panel {
           }
 
           PanelSeparator {
-            visible: singbox.profiles.length > 0
+            visible: singbox.daemonAvailable && singbox.profiles.length > 0
             foreground: root.foreground
           }
 
           Column {
-            visible: singbox.profiles.length > 0
+            visible: singbox.daemonAvailable && singbox.profiles.length > 0
             width: parent.width
             spacing: Style.space(8)
 
-            PanelSectionHeader {
-              text: "PROFILES"
+            CursorSurface {
+              width: parent.width
+              implicitHeight: Style.space(42)
               foreground: root.foreground
-              fontFamily: root.fontFamily
+              bordered: true
+              hasCursor: profilePickerMouse.containsMouse
+
+              RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: Style.space(10)
+                anchors.rightMargin: Style.space(10)
+                spacing: Style.space(8)
+                Text {
+                  text: "PROFILE"
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+                Text {
+                  Layout.fillWidth: true
+                  text: root.profileName || "Select a profile"
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  elide: Text.ElideRight
+                }
+                Text {
+                  text: root.profilesExpanded ? "󰅀" : "󰅂"
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                }
+              }
+              MouseArea {
+                id: profilePickerMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.profilesExpanded = !root.profilesExpanded
+              }
             }
 
             Column {
+              visible: root.profilesExpanded
               width: parent.width
               spacing: Style.space(5)
               Repeater {
@@ -462,7 +576,10 @@ Panel {
       cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
       onEntered: root.setHover("profile", profileRow.profileId)
       onExited: root.clearHover("profile", profileRow.profileId)
-      onClicked: singbox.selectProfile(profileRow.profileId)
+      onClicked: {
+        singbox.selectProfile(profileRow.profileId)
+        root.profilesExpanded = false
+      }
     }
 
     RowLayout {

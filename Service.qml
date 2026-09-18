@@ -81,7 +81,13 @@ Item {
     _desired = active ? 0 : 1
     actionStatus = _desired === 1 ? "Starting sing-box…" : "Stopping sing-box…"
     actionStatusTimer.restart()
-    if (!send("toggle")) _desired = -1
+    if (!send("toggle", { enabled: _desired === 1 })) _desired = -1
+  }
+
+  function startBackground() {
+    if (!installed || busy) return
+    actionStatus = "Starting background service…"
+    send("startBackground")
   }
 
   function selectProfile(profileId) {
